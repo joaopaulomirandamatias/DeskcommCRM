@@ -2,6 +2,7 @@ import { assertAgentOperationPg, type AgentOperationContext } from "@/lib/ai/age
 import { assertApprovedReplyPg } from "@/lib/ai/replies/delivery";
 import { assertMeetingDeliveryPg } from "@/lib/agenda/meet-delivery";
 import { claimOfJob } from "@/lib/agent-engine/queue/claim";
+import type { PacingKnobs } from "@/lib/agent-engine/pacing/defaults";
 import { withAgendaEffect, guardAgendaEffect } from "@/lib/agenda/efeito";
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { Queryable, JobRow } from "@/lib/agent-engine/queue/queue";
@@ -18,6 +19,8 @@ const execution = new AsyncLocalStorage<{
   boundary: ServiceBoundary | null;
   job?: JobRow;
   agentOperation?: AgentOperationContext;
+  /** Últimos knobs de pacing lidos NESTE turno; nunca cruza AsyncLocalStorage. */
+  pacingKnobs?: PacingKnobs;
 }>();
 export const SERVICE_BOUNDARY_SQL = `select c.organization_id, c.contact_id, c.id as conversation_id,
  c.service_revision::float8 as service_revision, c.current_demanda_id as demanda_id,
@@ -55,6 +58,18 @@ export function currentExecutionJob(): JobRow | null {
 export function setExecutionAgentOperation(context: AgentOperationContext): void {
   const scope = execution.getStore();
   if (scope) scope.agentOperation = context;
+}
+/**
+ * Mantém a configuração temporal junto do turno que a leu. O worker já usa
+ * AsyncLocalStorage para separar atendimentos; guardar aqui evita estado global
+ * entre números e permite que atraso/jitter consumam a mesma leitura do pacing.
+ */
+export function setExecutionPacingKnobs(knobs: PacingKnobs): void {
+  const scope = execution.getStore();
+  if (scope) scope.pacingKnobs = knobs;
+}
+export function currentExecutionPacingKnobs(): PacingKnobs | null {
+  return execution.getStore()?.pacingKnobs ?? null;
 }
 export async function guardServiceEffect(): Promise<void> {
   const scope = execution.getStore();
