@@ -16,11 +16,29 @@ export interface WarmupStep {
   cap: number | null;
 }
 
+/**
+ * Pausa antes da PRIMEIRA bolha do turno, para a resposta não chegar no mesmo
+ * instante em que o modelo termina. Também é por conexão: uma clínica e um
+ * e-commerce podem querer ritmos diferentes no mesmo produto.
+ */
+export interface HumanDelayKnobs {
+  /** Parcela fixa de reação antes de considerar o tamanho do texto. */
+  baseMs: number;
+  /** Parcela adicional por caractere da primeira bolha. */
+  msPerChar: number;
+  /** Piso do atraso resultante. */
+  minMs: number;
+  /** Teto do atraso resultante. */
+  maxMs: number;
+}
+
 export interface PacingKnobs {
   /** Intervalo mínimo entre envios do MESMO número (ms). */
   throttleMs: number;
   /** Teto do jitter randômico somado ao throttle e ao next_allowed_at (ms) — intervalo fixo é assinatura de bot. */
   jitterMaxMs: number;
+  /** Pausa humana da primeira bolha. */
+  humanDelay: HumanDelayKnobs;
   /** Janela horária de envio [start, end) na hora local do tenant. */
   windowStartHour: number;
   windowEndHour: number;
@@ -48,6 +66,11 @@ export interface PacingKnobs {
 export const KNOB_BOUNDS = {
   /** teto de intervalo/jitter aceito na UI (ms). */
   intervalMaxMs: 600_000,
+  /** Limites da pausa humana. Zero é válido: permite desligar uma parcela. */
+  humanDelayBaseMaxMs: 60_000,
+  humanDelayMsPerCharMax: 1_000,
+  humanDelayMinMaxMs: 60_000,
+  humanDelayMaxMaxMs: 120_000,
   /** maior hora aceita como INÍCIO de janela (fim vai até 24). */
   hourLastStart: 23,
   /** fim de janela é exclusivo e pode chegar à meia-noite seguinte. */
@@ -57,6 +80,14 @@ export const KNOB_BOUNDS = {
 export const PACING_DEFAULTS: PacingKnobs = {
   throttleMs: 1200, // 1 msg / 1,2s
   jitterMaxMs: 800,
+  // Mesmos quatro números do comportamento anterior à #653. Coluna NULL em
+  // channel_knobs mantém a instalação bit a bit compatível.
+  humanDelay: {
+    baseMs: 900,
+    msPerChar: 22,
+    minMs: 1200,
+    maxMs: 7500,
+  },
   windowStartHour: 7, // janela 7h-22h
   windowEndHour: 22,
   allowSunday: true,
