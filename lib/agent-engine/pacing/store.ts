@@ -13,6 +13,10 @@ import { dayStartInTz, type PacingState } from './engine';
 interface ChannelKnobsRow {
   throttle_ms: number | null;
   jitter_max_ms: number | null;
+  human_delay_base_ms: number | null;
+  human_delay_ms_per_char: number | null;
+  human_delay_min_ms: number | null;
+  human_delay_max_ms: number | null;
   window_start_hour: number | null;
   window_end_hour: number | null;
   allow_sunday: boolean | null;
@@ -60,7 +64,9 @@ export async function loadChannelKnobs(
   logger?: Logger,
 ): Promise<ChannelPacingConfig> {
   const { rows } = await db.query<ChannelKnobsRow>(
-    `select throttle_ms, jitter_max_ms, window_start_hour, window_end_hour,
+    `select throttle_ms, jitter_max_ms,
+            human_delay_base_ms, human_delay_ms_per_char, human_delay_min_ms, human_delay_max_ms,
+            window_start_hour, window_end_hour,
             allow_sunday, timezone, warmup_daily_caps, number_activated_at
      from channel_knobs
      where organization_id = $1 and channel_session_id = $2`,
@@ -68,7 +74,10 @@ export async function loadChannelKnobs(
   );
   const row = rows[0];
   if (!row) {
-    return { knobs: { ...PACING_DEFAULTS }, numberActivatedAt: null };
+    return {
+      knobs: { ...PACING_DEFAULTS, humanDelay: { ...PACING_DEFAULTS.humanDelay } },
+      numberActivatedAt: null,
+    };
   }
   let warmupDailyCaps = PACING_DEFAULTS.warmupDailyCaps;
   if (row.warmup_daily_caps !== null) {
@@ -84,10 +93,28 @@ export async function loadChannelKnobs(
       });
     }
   }
+  const humanDelay = {
+    baseMs: row.human_delay_base_ms ?? PACING_DEFAULTS.humanDelay.baseMs,
+    msPerChar: row.human_delay_ms_per_char ?? PACING_DEFAULTS.humanDelay.msPerChar,
+    minMs: row.human_delay_min_ms ?? PACING_DEFAULTS.humanDelay.minMs,
+    maxMs: row.human_delay_max_ms ?? PACING_DEFAULTS.humanDelay.maxMs,
+  };
+  // Escritor externo/linha legada inválida não pode inverter clamp e criar
+  // comportamento surpreendente no envio. O endpoint impede isto na escrita;
+  // o runtime repete a defesa porque o banco é fronteira, não confiança.
+  if (humanDelay.minMs > humanDelay.maxMs) {
+    logger?.warn('human delay inválido em channel_knobs — usando defaults conservadores', {
+      tenantId,
+      channelSessionId,
+    });
+    humanDelay.minMs = PACING_DEFAULTS.humanDelay.minMs;
+    humanDelay.maxMs = PACING_DEFAULTS.humanDelay.maxMs;
+  }
   return {
     knobs: {
       throttleMs: row.throttle_ms ?? PACING_DEFAULTS.throttleMs,
       jitterMaxMs: row.jitter_max_ms ?? PACING_DEFAULTS.jitterMaxMs,
+      humanDelay,
       windowStartHour: row.window_start_hour ?? PACING_DEFAULTS.windowStartHour,
       windowEndHour: row.window_end_hour ?? PACING_DEFAULTS.windowEndHour,
       allowSunday: row.allow_sunday ?? PACING_DEFAULTS.allowSunday,
