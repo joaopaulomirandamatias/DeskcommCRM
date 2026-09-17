@@ -22,6 +22,7 @@ import {
   knobsView,
   effectiveKnobs,
   windowIsValid,
+  humanDelayIsValid,
   WARMUP_PULADO,
   type ChannelKnobsRow,
 } from "@/lib/ai/pacing-knobs";
@@ -29,7 +30,7 @@ import {
 export const dynamic = "force-dynamic";
 
 const KNOB_COLUMNS =
-  "throttle_ms, jitter_max_ms, window_start_hour, window_end_hour, allow_sunday, timezone, warmup_daily_caps, number_activated_at";
+  "throttle_ms, jitter_max_ms, human_delay_base_ms, human_delay_ms_per_char, human_delay_min_ms, human_delay_max_ms, window_start_hour, window_end_hour, allow_sunday, timezone, warmup_daily_caps, number_activated_at";
 
 export async function GET(): Promise<Response> {
   const requestId = randomUUID();
@@ -135,8 +136,7 @@ export async function PUT(req: NextRequest): Promise<Response> {
     });
   }
 
-  // Valida a JANELA RESULTANTE (enviado sobre o estado atual): update parcial
-  // não pode deixar start >= end no efetivo.
+  // Valida os PARES RESULTANTES (payload parcial sobre estado atual/default).
   const { data: currentRow } = await admin
     .from("channel_knobs")
     .select(KNOB_COLUMNS)
@@ -147,6 +147,10 @@ export async function PUT(req: NextRequest): Promise<Response> {
     ...((currentRow as unknown as ChannelKnobsRow) ?? {
       throttle_ms: null,
       jitter_max_ms: null,
+      human_delay_base_ms: null,
+      human_delay_ms_per_char: null,
+      human_delay_min_ms: null,
+      human_delay_max_ms: null,
       window_start_hour: null,
       window_end_hour: null,
       allow_sunday: null,
@@ -160,6 +164,14 @@ export async function PUT(req: NextRequest): Promise<Response> {
     return fail(
       "validation_failed",
       `Janela inválida: início (${eff.windowStartHour}h) precisa ser antes do fim (${eff.windowEndHour}h).`,
+      422,
+      { requestId },
+    );
+  }
+  if (!humanDelayIsValid(eff.humanDelay.minMs, eff.humanDelay.maxMs)) {
+    return fail(
+      "validation_failed",
+      t("O atraso mínimo precisa ser menor ou igual ao atraso máximo."),
       422,
       { requestId },
     );
