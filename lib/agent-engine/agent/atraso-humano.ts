@@ -1,72 +1,49 @@
 /**
  * O TEMPO QUE UMA PESSOA LEVA PARA RESPONDER — e por que ele é feature.
  *
- * ─── O defeito ──────────────────────────────────────────────────────────────
+ * O agente não deve responder no mesmo instante em que o modelo termina. A
+ * fórmula continua determinística, mas desde a #653 os quatro números são knobs
+ * por conexão em `channel_knobs`; ausência de override cai nos mesmos defaults
+ * históricos, então atualizar não muda o ritmo de nenhuma instalação.
  *
- * O agente responde no instante em que o modelo termina de gerar. Do lado do
- * cliente, no WhatsApp, isso é inconfundível: a resposta chega junto com o "✓✓"
- * da mensagem que ele acabou de mandar. Nenhum atendente humano lê, pensa e
- * digita um parágrafo em 200ms — e o cliente sabe disso. Reportado pelo dono de
- * um tenant real (sítio de eventos): "responde rápido demais, parece robô".
+ *   atraso = clamp(BASE + POR_CARACTERE × comprimento, MINIMO, MAXIMO)
  *
- * O produto é um agente que ATENDE junto com humanos. Ser identificável como
- * máquina na primeira troca é perda de conversão, não detalhe estético.
- *
- * ─── A fórmula, e por que estes números ─────────────────────────────────────
- *
- *   atraso = clamp(NOTAR + POR_CARACTERE × comprimento, MINIMO, MAXIMO)
- *
- * `NOTAR` (900ms) é a parcela que NÃO depende do texto: ver a notificação,
- * abrir a conversa, ler o que o cliente escreveu. Ela existe separada do termo
- * proporcional porque mesmo um "Sim!" tem esse custo — sem ela, respostas
- * curtas voltariam a sair instantâneas, que é exatamente o defeito.
- *
- * `POR_CARACTERE` (22ms ≈ 45 caracteres/s) é digitação DELIBERADAMENTE mais
- * rápida que a real (um bom digitador faz ~8 c/s no celular). Não é erro de
- * calibração: em velocidade real, um parágrafo de 400 caracteres pediria 50
- * segundos, e um cliente esperando 50s conclui que ninguém vai responder.
- * O objetivo é "não é instantâneo", não "é indistinguível de humano" — a
- * segunda meta custa o atendimento.
- *
- * `MINIMO` (1200ms) é o piso do throttle anti-ban do canal (CLAUDE.md: 1 msg /
- * 1.2s). Um atraso "humano" menor que o piso que o anti-ban já impõe seria
- * decoração que não muda nada. `MAXIMO` (7500ms) é o teto: acima disso o
- * silêncio deixa de ler como "está digitando" e passa a ler como "caiu".
- *
- * ─── Onde ele NÃO entra ─────────────────────────────────────────────────────
- *
- * Este atraso é do TURNO, antes da PRIMEIRA bolha. O intervalo ENTRE bolhas
- * continua sendo o jitter anti-ban (1.2s + ≤800ms) que já existia — são coisas
- * diferentes com donos diferentes, e somá-las numa só apagaria o throttle que
- * protege o número de banimento.
+ * Este atraso é do TURNO, antes da PRIMEIRA bolha. O intervalo ENTRE bolhas é
+ * outra decisão: usa `throttleMs + jitterMaxMs` da mesma conexão. Desde a #654 a
+ * pausa humana é paga antes de tomar o lock do número; parametrizá-la não pode
+ * mover essa espera de volta para dentro da transação.
  */
 import type { Logger } from '../obs/logger';
+import {
+  PACING_DEFAULTS,
+  type HumanDelayKnobs,
+} from '../pacing/defaults';
 
-/** Ver o cabeçalho: a parcela que não depende do tamanho do texto. */
-export const ATRASO_NOTAR_MS = 900;
-
-/** ≈45 caracteres/s — rápido de propósito; ver o cabeçalho. */
-export const MS_POR_CARACTERE = 22;
-
-/** Piso do throttle anti-ban do canal (CLAUDE.md). Abaixo dele o atraso não significa nada. */
-export const ATRASO_MINIMO_MS = 1200;
-
-/** Acima disto o silêncio lê como queda, não como digitação. */
-export const ATRASO_MAXIMO_MS = 7500;
+/** Aliases compatíveis para consumidores/testes antigos; a fonte única é PACING_DEFAULTS. */
+export const ATRASO_NOTAR_MS = PACING_DEFAULTS.humanDelay.baseMs;
+export const MS_POR_CARACTERE = PACING_DEFAULTS.humanDelay.msPerChar;
+export const ATRASO_MINIMO_MS = PACING_DEFAULTS.humanDelay.minMs;
+export const ATRASO_MAXIMO_MS = PACING_DEFAULTS.humanDelay.maxMs;
 
 /**
  * Quanto esperar antes de mandar `texto`, em ms. Pura — é o que a torna
- * testável sem relógio e sem canal.
+ * testável sem relógio e sem canal. Sem knobs explícitos preserva o comportamento
+ * histórico para callers/testes que não conhecem a configuração por conexão.
  */
-export function calcularAtrasoHumano(texto: string): number {
+export function calcularAtrasoHumano(
+  texto: string,
+  knobs: HumanDelayKnobs = PACING_DEFAULTS.humanDelay,
+): number {
   const comprimento = (texto ?? '').trim().length;
-  const bruto = ATRASO_NOTAR_MS + MS_POR_CARACTERE * comprimento;
-  return Math.min(ATRASO_MAXIMO_MS, Math.max(ATRASO_MINIMO_MS, bruto));
+  const bruto = knobs.baseMs + knobs.msPerChar * comprimento;
+  return Math.min(knobs.maxMs, Math.max(knobs.minMs, bruto));
 }
 
 export interface EsperaHumanaArgs {
   /** O corpo que vai sair — é o tamanho DELE que dita a espera. */
   texto: string;
+  /** Knobs efetivos da conexão; ausente = defaults compatíveis. */
+  knobs?: HumanDelayKnobs;
   sleep: (ms: number) => Promise<void>;
   log: Logger;
   /**
@@ -89,7 +66,7 @@ export interface EsperaHumanaArgs {
  * os segundos de silêncio sem a explicação visual que os torna naturais.
  */
 export async function esperarComoHumano(args: EsperaHumanaArgs): Promise<number> {
-  const ms = calcularAtrasoHumano(args.texto);
+  const ms = calcularAtrasoHumano(args.texto, args.knobs);
 
   if (args.sinalizarDigitando !== undefined) {
     try {
