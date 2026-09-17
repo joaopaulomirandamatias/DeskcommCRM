@@ -5,6 +5,7 @@
  * sentToday (contado desde a meia-noite LOCAL do tenant). Quem grava no ledger
  * é a cadeia de envio (F2-13) via `recordSend` — este módulo é o seam.
  */
+import { setExecutionPacingKnobs } from '@/lib/atendimento/fronteira-server';
 import type { Logger } from '../obs/logger';
 import type { Queryable } from '../queue/queue';
 import { PACING_DEFAULTS, type PacingKnobs, type WarmupStep } from './defaults';
@@ -53,6 +54,17 @@ export interface ChannelPacingConfig {
 }
 
 /**
+ * Além de devolver, memoriza os knobs no AsyncLocalStorage do atendimento quando
+ * existe um turno ativo. A leitura pré-janela alimenta a pausa humana fora do
+ * lock; a leitura posterior do before_send substitui pelo estado autoritativo
+ * que o envio físico usa. Fora de um turno (scripts/testes/preview), é no-op.
+ */
+function configDaExecucao(config: ChannelPacingConfig): ChannelPacingConfig {
+  setExecutionPacingKnobs(config.knobs);
+  return config;
+}
+
+/**
  * Knobs efetivos do número: linha de channel_knobs (se houver) sobre os defaults.
  * `logger` (o estruturado de obs/) registra knob inválido descartado — a cadeia
  * de envio (F2-13) passa o logger do daemon.
@@ -74,10 +86,10 @@ export async function loadChannelKnobs(
   );
   const row = rows[0];
   if (!row) {
-    return {
+    return configDaExecucao({
       knobs: { ...PACING_DEFAULTS, humanDelay: { ...PACING_DEFAULTS.humanDelay } },
       numberActivatedAt: null,
-    };
+    });
   }
   let warmupDailyCaps = PACING_DEFAULTS.warmupDailyCaps;
   if (row.warmup_daily_caps !== null) {
@@ -110,7 +122,7 @@ export async function loadChannelKnobs(
     humanDelay.minMs = PACING_DEFAULTS.humanDelay.minMs;
     humanDelay.maxMs = PACING_DEFAULTS.humanDelay.maxMs;
   }
-  return {
+  return configDaExecucao({
     knobs: {
       throttleMs: row.throttle_ms ?? PACING_DEFAULTS.throttleMs,
       jitterMaxMs: row.jitter_max_ms ?? PACING_DEFAULTS.jitterMaxMs,
@@ -122,7 +134,7 @@ export async function loadChannelKnobs(
       warmupDailyCaps,
     },
     numberActivatedAt: row.number_activated_at,
-  };
+  });
 }
 
 /** lastSentAt (qualquer dia) + sentToday (desde a meia-noite local do tenant). */
