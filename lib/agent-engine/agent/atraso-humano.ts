@@ -13,6 +13,7 @@
  * pausa humana é paga antes de tomar o lock do número; parametrizá-la não pode
  * mover essa espera de volta para dentro da transação.
  */
+import { currentExecutionPacingKnobs } from '@/lib/atendimento/fronteira-server';
 import type { Logger } from '../obs/logger';
 import {
   PACING_DEFAULTS,
@@ -26,23 +27,25 @@ export const ATRASO_MINIMO_MS = PACING_DEFAULTS.humanDelay.minMs;
 export const ATRASO_MAXIMO_MS = PACING_DEFAULTS.humanDelay.maxMs;
 
 /**
- * Quanto esperar antes de mandar `texto`, em ms. Pura — é o que a torna
- * testável sem relógio e sem canal. Sem knobs explícitos preserva o comportamento
- * histórico para callers/testes que não conhecem a configuração por conexão.
+ * Quanto esperar antes de mandar `texto`, em ms. Pura quando recebe knobs; sem
+ * eles usa os knobs já lidos para ESTE turno e, fora de execução, cai nos
+ * defaults compatíveis (scripts/testes antigos não ganham estado escondido).
  */
 export function calcularAtrasoHumano(
   texto: string,
-  knobs: HumanDelayKnobs = PACING_DEFAULTS.humanDelay,
+  knobs?: HumanDelayKnobs,
 ): number {
+  const efetivos =
+    knobs ?? currentExecutionPacingKnobs()?.humanDelay ?? PACING_DEFAULTS.humanDelay;
   const comprimento = (texto ?? '').trim().length;
-  const bruto = knobs.baseMs + knobs.msPerChar * comprimento;
-  return Math.min(knobs.maxMs, Math.max(knobs.minMs, bruto));
+  const bruto = efetivos.baseMs + efetivos.msPerChar * comprimento;
+  return Math.min(efetivos.maxMs, Math.max(efetivos.minMs, bruto));
 }
 
 export interface EsperaHumanaArgs {
   /** O corpo que vai sair — é o tamanho DELE que dita a espera. */
   texto: string;
-  /** Knobs efetivos da conexão; ausente = defaults compatíveis. */
+  /** Override explícito para testes/callers fora do turno. */
   knobs?: HumanDelayKnobs;
   sleep: (ms: number) => Promise<void>;
   log: Logger;
