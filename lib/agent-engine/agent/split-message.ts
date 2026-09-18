@@ -112,7 +112,7 @@ export interface SendInBubblesOpts<T extends BubbleOutcome = BubbleOutcome> {
   maxChars: number;
   send: (body: string) => Promise<T>;
   sleep: (ms: number) => Promise<void>;
-  /** fallback legado/testável quando não há turno com pacing no AsyncLocalStorage. */
+  /** ms de jitter humano entre bolhas (só entre, não antes da 1ª). Fallback fora de um turno. */
   jitter: () => number;
   /**
    * Roda UMA vez, antes do 1º envio, recebendo a 1ª bolha — é o gancho do
@@ -138,6 +138,19 @@ export interface SendInBubblesOpts<T extends BubbleOutcome = BubbleOutcome> {
    */
   antesDaPrimeira?: (primeiraBolha: string) => Promise<void>;
 }
+
+/**
+ * Envia o corpo em bolhas quando `enabled`; senão um envio só. Cada bolha passa
+ * pelo mesmo `send` (que no runtime é o channel.send pós-guardrails, com seq++).
+ * Para no 1º outcome que não seja de sucesso ('sent'/'already_sent'/'queued')
+ * e o devolve — não segue mandando bolha após veto/bloqueio/falha.
+ *
+ * LIMITAÇÃO CONHECIDA: o contador de cap diário do pacing anti-ban (recordSend)
+ * conta o send lógico UMA vez por turno, então um turno de N bolhas avança o cap
+ * em 1, não N — aceitável por ora (doutrina: "anti-ban gateia uma vez"); revisitar
+ * se o warm-up precisar de precisão por mensagem física.
+ */
+const OK_KINDS = new Set(["sent", "already_sent", "queued"]);
 
 /** Intervalo físico entre bolhas: o mesmo throttle+jitter configurado da conexão. */
 export function intervaloEntreBolhas(
@@ -172,9 +185,9 @@ export async function sendInBubbles<T extends BubbleOutcome>(
   if (bubbles.length === 0) return opts.send(body); // corpo vazio: deixa o canal decidir
   let last: T | undefined;
   for (let i = 0; i < bubbles.length; i++) {
-    // Antes da 1ª: o atraso humano do turno. Entre as demais: o pacing da
-    // conexão já relido pelo before_send sob o lock. Teste/script sem contexto
-    // continua usando o callback injetável antigo.
+    // Antes da 1ª: o atraso humano do turno. Entre as demais: o jitter anti-ban
+    // que já existia. Nunca os dois na mesma pausa. Em produção, a configuração
+    // efetiva da conexão vence; fora de um turno, preserva o callback injetável.
     if (i === 0) await opts.antesDaPrimeira?.(bubbles[0]!);
     else {
       const pacing = currentExecutionPacingKnobs();
@@ -185,5 +198,3 @@ export async function sendInBubbles<T extends BubbleOutcome>(
   }
   return last!;
 }
-
-const OK_KINDS = new Set(["sent", "already_sent", "queued"]);
