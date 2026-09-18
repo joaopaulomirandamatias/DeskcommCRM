@@ -20,14 +20,14 @@ function logDeTeste(): Logger & { linhas: Array<{ nivel: string; msg: string }> 
 }
 
 describe("calcularAtrasoHumano", () => {
-  it("resposta de duas palavras espera o PISO, não uma eternidade", () => {
+  it("resposta de duas palavras espera o PISO default, não uma eternidade", () => {
     // O defeito que este módulo conserta é o oposto (resposta instantânea), mas
     // a correção não pode criar o defeito simétrico: "Oi, tudo bem?" com 8s de
     // espera lê como travamento, não como humano.
     expect(calcularAtrasoHumano("Oi, tudo bem?")).toBe(ATRASO_MINIMO_MS);
   });
 
-  it("parágrafo longo é limitado pelo TETO", () => {
+  it("parágrafo longo é limitado pelo TETO default", () => {
     const paragrafo = "a".repeat(4000);
     expect(calcularAtrasoHumano(paragrafo)).toBe(ATRASO_MAXIMO_MS);
   });
@@ -42,11 +42,15 @@ describe("calcularAtrasoHumano", () => {
     expect(media).toBeLessThanOrEqual(ATRASO_MAXIMO_MS);
   });
 
-  it("o piso não fica abaixo do piso anti-ban de 1,2s", () => {
-    // Doutrina WAHA (CLAUDE.md): throttle 1 msg/1.2s. Um atraso "humano" menor
-    // que o piso do anti-ban seria decoração que não protege nada.
+  it("o default preserva o piso anti-ban histórico de 1,2s", () => {
     expect(ATRASO_MINIMO_MS).toBeGreaterThanOrEqual(1200);
     expect(calcularAtrasoHumano("")).toBeGreaterThanOrEqual(1200);
+  });
+
+  it("aceita os quatro knobs da conexão e respeita o clamp configurado", () => {
+    const knobs = { baseMs: 2_000, msPerChar: 100, minMs: 2_500, maxMs: 4_000 };
+    expect(calcularAtrasoHumano("12345", knobs)).toBe(2_500);
+    expect(calcularAtrasoHumano("x".repeat(100), knobs)).toBe(4_000);
   });
 
   it("devolve inteiro de milissegundos (é argumento de setTimeout)", () => {
@@ -84,6 +88,16 @@ describe("esperarComoHumano", () => {
 
     expect(sleep).toHaveBeenCalledTimes(1);
     expect(sleep).toHaveBeenCalledWith(calcularAtrasoHumano(texto));
+  });
+
+  it("usa knobs explícitos quando o chamador precisa sobrescrever o contexto", async () => {
+    const texto = "Oi";
+    const knobs = { baseMs: 3_000, msPerChar: 0, minMs: 3_000, maxMs: 3_000 };
+    const sleep = vi.fn(async () => undefined);
+
+    await esperarComoHumano({ texto, knobs, sleep, log: logDeTeste() });
+
+    expect(sleep).toHaveBeenCalledWith(3_000);
   });
 
   it("presença que FALHA não derruba o envio nem encurta a espera", async () => {
