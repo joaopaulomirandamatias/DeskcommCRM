@@ -39,6 +39,10 @@ interface FormState {
   window_end_hour: string;
   throttle_s: string;
   jitter_s: string;
+  human_delay_base_s: string;
+  human_delay_ms_per_char: string;
+  human_delay_min_s: string;
+  human_delay_max_s: string;
   daily_message_limit: string;
   allow_sunday: boolean;
   timezone: string;
@@ -54,6 +58,14 @@ function fromItem(item: PacingKnobsItem): FormState {
     window_end_hour: o?.window_end_hour != null ? String(o.window_end_hour) : "",
     throttle_s: o?.throttle_ms != null ? String(o.throttle_ms / 1000) : "",
     jitter_s: o?.jitter_max_ms != null ? String(o.jitter_max_ms / 1000) : "",
+    human_delay_base_s:
+      o?.human_delay_base_ms != null ? String(o.human_delay_base_ms / 1000) : "",
+    human_delay_ms_per_char:
+      o?.human_delay_ms_per_char != null ? String(o.human_delay_ms_per_char) : "",
+    human_delay_min_s:
+      o?.human_delay_min_ms != null ? String(o.human_delay_min_ms / 1000) : "",
+    human_delay_max_s:
+      o?.human_delay_max_ms != null ? String(o.human_delay_max_ms / 1000) : "",
     daily_message_limit:
       item.channel_session.daily_message_limit != null
         ? String(item.channel_session.daily_message_limit)
@@ -140,6 +152,10 @@ export function AntiBanSheet({ item, canWrite, onClose }: Props) {
         window_end_hour: intOrNull(form.window_end_hour),
         throttle_ms: msOrNull(form.throttle_s),
         jitter_max_ms: msOrNull(form.jitter_s),
+        human_delay_base_ms: msOrNull(form.human_delay_base_s),
+        human_delay_ms_per_char: intOrNull(form.human_delay_ms_per_char),
+        human_delay_min_ms: msOrNull(form.human_delay_min_s),
+        human_delay_max_ms: msOrNull(form.human_delay_max_s),
         // `null` quando o Switch está no default: salvar esta ficha por outro
         // motivo (aquecimento, throttle) não pode congelar o padrão do dia como
         // escolha permanente — foi assim que uma instalação ficou muda todo
@@ -185,8 +201,6 @@ export function AntiBanSheet({ item, canWrite, onClose }: Props) {
             <Input
               id="numero-em-uso-desde"
               type="date"
-              // O dia LOCAL, que é o que este campo fala. Com o dia UTC, às 21h
-              // em São Paulo o limite já oferecia amanhã.
               max={diaDeHojeLocal()}
               value={form.numero_em_uso_desde}
               onChange={(e) => set({ numero_em_uso_desde: e.target.value })}
@@ -310,6 +324,75 @@ export function AntiBanSheet({ item, canWrite, onClose }: Props) {
                 "Intervalo mínimo entre mensagens do mesmo número, mais uma variação aleatória — ritmo cravado parece robô para o WhatsApp.",
               )}
             </p>
+          </fieldset>
+
+          <fieldset className="flex flex-col gap-2" data-testid="human-delay-knobs">
+            <Label>{t("Tempo de resposta")}</Label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <code>t₀ (s)</code>
+                <Input
+                  type="number"
+                  min={0}
+                  max={item.bounds.humanDelayBaseMaxMs / 1000}
+                  step="0.1"
+                  inputMode="decimal"
+                  placeholder={String(eff.humanDelay.baseMs / 1000)}
+                  value={form.human_delay_base_s}
+                  onChange={(e) => set({ human_delay_base_s: e.target.value })}
+                  disabled={!canWrite}
+                  aria-label={`${t("Tempo de resposta")} t₀`}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <code>ms/char</code>
+                <Input
+                  type="number"
+                  min={0}
+                  max={item.bounds.humanDelayMsPerCharMax}
+                  step="1"
+                  inputMode="numeric"
+                  placeholder={String(eff.humanDelay.msPerChar)}
+                  value={form.human_delay_ms_per_char}
+                  onChange={(e) => set({ human_delay_ms_per_char: e.target.value })}
+                  disabled={!canWrite}
+                  aria-label={`${t("Tempo de resposta")} ms/char`}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <code>min (s)</code>
+                <Input
+                  type="number"
+                  min={0}
+                  max={item.bounds.humanDelayMinMaxMs / 1000}
+                  step="0.1"
+                  inputMode="decimal"
+                  placeholder={String(eff.humanDelay.minMs / 1000)}
+                  value={form.human_delay_min_s}
+                  onChange={(e) => set({ human_delay_min_s: e.target.value })}
+                  disabled={!canWrite}
+                  aria-label={`${t("Tempo de resposta")} min`}
+                />
+              </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                <code>max (s)</code>
+                <Input
+                  type="number"
+                  min={0}
+                  max={item.bounds.humanDelayMaxMaxMs / 1000}
+                  step="0.1"
+                  inputMode="decimal"
+                  placeholder={String(eff.humanDelay.maxMs / 1000)}
+                  value={form.human_delay_max_s}
+                  onChange={(e) => set({ human_delay_max_s: e.target.value })}
+                  disabled={!canWrite}
+                  aria-label={`${t("Tempo de resposta")} max`}
+                />
+              </label>
+            </div>
+            <code className="text-xs text-muted-foreground">
+              delay = clamp(t₀ + ms/char × chars, min, max)
+            </code>
           </fieldset>
 
           <fieldset className="flex flex-col gap-2">
