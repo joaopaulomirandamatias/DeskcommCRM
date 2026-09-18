@@ -29,7 +29,11 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const KNOB_COLUMNS =
+// `string` de propósito: as quatro colunas novas existem depois da migration
+// 0275, mas o arquivo gerado de tipos pode ser regenerado só no próximo ciclo de
+// schema. Widen aqui evita que o parser de select do client trate a lista como
+// contrato estático desatualizado; o shape é validado em ChannelKnobsRow abaixo.
+const KNOB_COLUMNS: string =
   "throttle_ms, jitter_max_ms, human_delay_base_ms, human_delay_ms_per_char, human_delay_min_ms, human_delay_max_ms, window_start_hour, window_end_hour, allow_sunday, timezone, warmup_daily_caps, number_activated_at";
 
 export async function GET(): Promise<Response> {
@@ -169,12 +173,10 @@ export async function PUT(req: NextRequest): Promise<Response> {
     );
   }
   if (!humanDelayIsValid(eff.humanDelay.minMs, eff.humanDelay.maxMs)) {
-    return fail(
-      "validation_failed",
-      t("O atraso mínimo precisa ser menor ou igual ao atraso máximo."),
-      422,
-      { requestId },
-    );
+    return fail("validation_failed", t("Campos inválidos."), 422, {
+      requestId,
+      details: { human_delay: "min_gt_max" },
+    });
   }
 
   if (Object.keys(knobFields).length > 0) {
